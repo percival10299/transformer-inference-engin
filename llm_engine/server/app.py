@@ -33,7 +33,7 @@ class GenerateRequest(BaseModel):
 
 
 def load_model_from_env() -> LoadedModel:
-    checkpoint_path = Path(os.environ.get("CHECKPOINT_PATH", "checkpoints/tiny_gpt.pt"))
+    checkpoint_path = Path(os.environ.get("CHECKPOINT_PATH", "checkpoints/transformer.pt"))
     if not checkpoint_path.exists():
         raise RuntimeError(f"Checkpoint not found at {checkpoint_path}. Train a model first or set CHECKPOINT_PATH.")
     device = resolve_device(os.environ.get("DEVICE", "auto"))

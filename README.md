@@ -79,33 +79,33 @@ python -m pytest tests/ -v
 ## Train The Model
 
 ```bash
-python -m llm_engine.cli.train --config configs/tiny_gpt.yaml
+python -m llm_engine.cli.train --config configs/transformer.yaml
 ```
 
 To disable automatic checkpoint resume:
 
 ```bash
-python -m llm_engine.cli.train --config configs/tiny_gpt.yaml --no-resume
+python -m llm_engine.cli.train --config configs/transformer.yaml --no-resume
 ```
 
 ## Resume Training
 
-If `checkpoints/tiny_gpt.pt` exists, training resumes from it by default.
+If `checkpoints/transformer.pt` exists, training resumes from it by default.
 
 ```bash
-python -m llm_engine.cli.train --config configs/tiny_gpt.yaml --checkpoint checkpoints/tiny_gpt.pt
+python -m llm_engine.cli.train --config configs/transformer.yaml --checkpoint checkpoints/transformer.pt
 ```
 
 ## Generate Text
 
 ```bash
-python -m llm_engine.cli.generate --checkpoint checkpoints/tiny_gpt.pt --prompt "Once upon a time"
+python -m llm_engine.cli.generate --checkpoint checkpoints/transformer.pt --prompt "Once upon a time"
 ```
 
 You can adjust sampling:
 
 ```bash
-python -m llm_engine.cli.generate --checkpoint checkpoints/tiny_gpt.pt --prompt "Once upon a time" --temperature 0.8 --top-k 40 --max-new-tokens 120
+python -m llm_engine.cli.generate --checkpoint checkpoints/transformer.pt --prompt "Once upon a time" --temperature 0.8 --top-k 40 --max-new-tokens 120
 ```
 
 ## Stream Tokens Over HTTP
@@ -134,7 +134,7 @@ python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_
 
 ## Configuration
 
-The training and model hyperparameters live in `configs/tiny_gpt.yaml`, including:
+The training and model hyperparameters live in `configs/transformer.yaml`, including:
 
 - vocabulary size
 - context length

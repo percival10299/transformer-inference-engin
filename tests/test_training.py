@@ -39,7 +39,7 @@ def test_checkpoint_roundtrip_preserves_predictions(tmp_path: Path) -> None:
     model = build_test_model()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     tokenizer = ByteTokenizer()
-    checkpoint_path = tmp_path / "tiny_gpt.pt"
+    checkpoint_path = tmp_path / "transformer.pt"
     input_ids = torch.randint(0, 257, (2, 8))
 
     model.eval()

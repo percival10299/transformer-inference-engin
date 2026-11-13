@@ -8,11 +8,11 @@ from llm_engine.training.trainer import Trainer, load_yaml_config
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a GPT-style Transformer on TinyStories")
-    parser.add_argument("--config", type=str, default="configs/tiny_gpt.yaml", help="Path to YAML config")
+    parser.add_argument("--config", type=str, default="configs/transformer.yaml", help="Path to YAML config")
     parser.add_argument(
         "--checkpoint",
         type=str,
-        default="checkpoints/tiny_gpt.pt",
+        default="checkpoints/transformer.pt",
         help="Checkpoint path for save/resume",
     )
     parser.add_argument(
