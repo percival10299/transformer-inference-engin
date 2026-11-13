@@ -1,0 +1,8 @@
+torch
+datasets
+PyYAML
+tqdm
+pytest
+fastapi
+uvicorn
+httpx
