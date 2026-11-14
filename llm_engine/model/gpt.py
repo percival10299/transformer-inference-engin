@@ -7,6 +7,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from llm_engine.model.attention import KVCache
 from llm_engine.model.embeddings import GPTEmbeddings
 from llm_engine.model.transformer_block import TransformerBlock
 
@@ -61,19 +62,32 @@ class GPTModel(nn.Module):
         if isinstance(module, nn.Linear) and module.bias is not None:
             nn.init.zeros_(module.bias)
 
+    def _run(
+        self,
+        input_ids: torch.Tensor,
+        past_kvs: list[KVCache] | None,
+        use_cache: bool,
+    ) -> tuple[torch.Tensor, list[KVCache] | None]:
+        past_length = 0 if past_kvs is None else past_kvs[0][0].size(2)
+        if past_length + input_ids.size(1) > self.config.context_length:
+            raise ValueError("sequence length (cached + new tokens) exceeds context_length")
+
+        x = self.embeddings(input_ids, past_length=past_length)
+        presents: list[KVCache] = []
+        for layer_index, block in enumerate(self.blocks):
+            past_kv = None if past_kvs is None else past_kvs[layer_index]
+            x, present_kv = block(x, past_kv=past_kv, use_cache=use_cache)
+            if present_kv is not None:
+                presents.append(present_kv)
+        x = self.final_layer_norm(x)
+        return self.lm_head(x), (presents if use_cache else None)
+
     def forward(
         self,
         input_ids: torch.Tensor,
         targets: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        if input_ids.size(1) > self.config.context_length:
-            raise ValueError("input sequence length exceeds context_length")
-
-        x = self.embeddings(input_ids)
-        for block in self.blocks:
-            x = block(x)
-        x = self.final_layer_norm(x)
-        logits = self.lm_head(x)
+        logits, _ = self._run(input_ids, past_kvs=None, use_cache=False)
 
         loss = None
         if targets is not None:
@@ -82,3 +96,17 @@ class GPTModel(nn.Module):
                 targets.reshape(-1),
             )
         return logits, loss
+
+    def forward_with_cache(
+        self,
+        input_ids: torch.Tensor,
+        past_kvs: list[KVCache] | None = None,
+    ) -> tuple[torch.Tensor, list[KVCache]]:
+        """Run only `input_ids` and return (logits, updated per-layer KV cache).
+
+        Prefill: pass the whole prompt with past_kvs=None.
+        Decode: pass just the newest token together with the previous cache.
+        """
+        logits, presents = self._run(input_ids, past_kvs=past_kvs, use_cache=True)
+        assert presents is not None
+        return logits, presents

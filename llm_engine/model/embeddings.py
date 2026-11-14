@@ -17,9 +17,10 @@ class GPTEmbeddings(nn.Module):
         self.position_embeddings = nn.Embedding(context_length, d_model)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+    def forward(self, input_ids: torch.Tensor, past_length: int = 0) -> torch.Tensor:
         batch_size, sequence_length = input_ids.shape
-        positions = torch.arange(sequence_length, device=input_ids.device)
+        # With a KV cache the new tokens continue at position past_length, not 0.
+        positions = torch.arange(past_length, past_length + sequence_length, device=input_ids.device)
         positions = positions.unsqueeze(0).expand(batch_size, sequence_length)
 
         token_embeddings = self.token_embeddings(input_ids)

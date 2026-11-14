@@ -2,7 +2,7 @@
 
 This repository starts with Phase 1 of a larger portfolio project: a decoder-only GPT-style Transformer implemented from scratch in PyTorch, trained on TinyStories, saved to checkpoints, and used for basic autoregressive generation.
 
-Later phases will add KV caching, an inference engine with continuous batching, a FastAPI server, and performance benchmarking.
+Later phases will add an inference engine with continuous batching and further performance work.
 
 ## Phase 1 Scope
 
@@ -10,7 +10,7 @@ Later phases will add KV caching, an inference engine with continuous batching, 
 - TinyStories data loading and byte-level tokenization
 - next-token prediction training loop with validation
 - checkpoint save and resume support
-- autoregressive text generation without KV caching
+- autoregressive text generation with an optional KV cache (on by default)
 - CPU-friendly unit tests that do not download TinyStories
 
 ## Project Layout
@@ -19,6 +19,7 @@ Later phases will add KV caching, an inference engine with continuous batching, 
 configs/                 YAML hyperparameters
 checkpoints/             saved model/optimizer state (gitignored)
 tests/                   CPU-friendly unit tests
+benchmarks/              KV-cache decoding benchmark
 llm_engine/
   device.py              device selection (cuda / mps / cpu)
   model/                 GPT architecture (embeddings, attention, feedforward, block, gpt)
@@ -63,6 +64,42 @@ The model is implemented from first principles rather than using a pretrained Hu
    Loads a saved checkpoint, performs autoregressive sampling with temperature and optional top-k filtering, handles empty prompts, and decodes output text.
 2. `llm_engine/cli/generate.py`
    CLI entrypoint for text generation from a saved checkpoint.
+
+## KV Cache
+
+Without a cache, every decode step re-runs the whole sequence through the model, so the work per token grows with context length. With a cache, each layer stores the keys and values of tokens it has already seen:
+
+1. **Prefill:** the full prompt goes through the model once, producing the first token and filling the cache (`GPTModel.forward_with_cache(prompt)`).
+2. **Decode:** each later step feeds only the newest token plus the cache (`forward_with_cache(token, cache)`). Its query attends to all cached keys, and its own K/V is appended.
+
+`CausalSelfAttention.forward(x, past_kv, use_cache)` returns `(output, present_kv)`. The positional embedding is offset by the cache length, and the causal mask rows are taken at the tokens' absolute positions.
+
+Generation uses the cache by default. Pass `use_kv_cache=False` to `generate_token_ids` / `stream_token_ids` for the uncached path. `temperature=0` selects greedy decoding.
+
+Limits:
+
+- Position embeddings are learned and absolute, so a sequence cannot exceed `context_length`. Past that point the window slides, cached positions become invalid, and generation falls back to recomputing the window each step.
+- The cache grows with `torch.cat` each step, which copies it. A preallocated buffer would avoid that.
+
+## Benchmark: KV Cache vs No Cache
+
+```bash
+python -m benchmarks.kv_cache --device cpu
+```
+
+Greedy decoding of 64 tokens at prompt lengths 128, 512 and 1,024; the median of 5 runs is reported. The trained checkpoint only supports 128 positions, so the benchmark uses a randomly initialised model with the same architecture (d_model 128, 4 heads, 4 layers, 1.0M parameters) and a longer context window. Speed does not depend on the weight values. Every run also checks that the cached and uncached tokens are identical (`match`) and reports the largest logit difference.
+
+Apple M3 Max, CPU, torch 2.14.1, 10 threads. Decode columns time only the 63 steps after the prefill:
+
+| Context | Uncached ms/token | Cached ms/token | Uncached tok/s | Cached tok/s | Decode speedup | Prefill ms | KV cache MiB | Tokens match | Max logit diff |
+|--------:|------------------:|----------------:|---------------:|-------------:|---------------:|-----------:|-------------:|:------------:|---------------:|
+| 128     | 2.96              | 0.69            | 338            | 1,440        | 4.3x           | 2.5        | 0.7          | yes          | 1.7e-05        |
+| 512     | 13.15             | 1.10            | 76             | 912          | 12.0x          | 12.3       | 2.2          | yes          | 1.8e-05        |
+| 1,024   | 24.43             | 1.15            | 41             | 870          | 21.2x          | 18.6       | 4.2          | yes          | 1.9e-05        |
+
+Uncached cost per token grows with context, roughly 8x from 128 to 1,024 tokens. Cached cost grows only 1.7x, so the speedup widens with context. A second CPU run was within about 5% for the 128 and 512 rows. At 1,024 tokens the uncached time stayed within 2% (24.95 ms), but the cached time moved 9% (1.05 ms vs 1.15 ms). That shifts the speedup to 23.7x, so read the 1,024 row as roughly 21-24x.
+
+On the Apple GPU (`--device mps`) the speedup is only 1.0x-1.2x. This is not a cache problem. A cached step takes about 0.9 ms when the cache length is fixed, but about 5 ms when it grows each step, because each new tensor shape adds per-step overhead on MPS that outweighs the saved compute. Use CPU or CUDA numbers when judging the cache.
 
 ## Install Dependencies
 
@@ -149,5 +186,5 @@ The training and model hyperparameters live in `configs/transformer.yaml`, inclu
 
 Planned as new sub-packages of `llm_engine/`:
 
-- `llm_engine/engine/`: KV-cache support, asynchronous request scheduling, continuous batching, latency and throughput instrumentation
-- `benchmarks/`: generation throughput benchmarks, latency profiling, and CUDA profiling scripts
+- `llm_engine/engine/`: asynchronous request scheduling, continuous batching, latency and throughput instrumentation
+- `benchmarks/`: more benchmarks for throughput and latency, and CUDA profiling scripts

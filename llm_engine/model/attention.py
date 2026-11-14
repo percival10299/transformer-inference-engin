@@ -5,6 +5,9 @@ import math
 import torch
 from torch import nn
 
+# Cached keys and values for one layer, each shaped [B, n_heads, T_cached, head_dim].
+KVCache = tuple[torch.Tensor, torch.Tensor]
+
 
 class CausalSelfAttention(nn.Module):
     def __init__(
@@ -32,9 +35,15 @@ class CausalSelfAttention(nn.Module):
         causal_mask = torch.tril(torch.ones(context_length, context_length, dtype=torch.bool))
         self.register_buffer("causal_mask", causal_mask.view(1, 1, context_length, context_length), persistent=False)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        past_kv: KVCache | None = None,
+        use_cache: bool = False,
+    ) -> tuple[torch.Tensor, KVCache | None]:
         # x has shape [B, T, C] where:
-        # B = batch size, T = sequence length, C = d_model.
+        # B = batch size, T = number of NEW tokens, C = d_model.
+        # Without a cache T is the whole sequence. With a cache, T is 1 while decoding.
         batch_size, sequence_length, channels = x.shape
 
         # After projection each tensor is still [B, T, C].
@@ -48,10 +57,21 @@ class CausalSelfAttention(nn.Module):
         key = key.view(batch_size, sequence_length, self.n_heads, self.head_dim).transpose(1, 2)
         value = value.view(batch_size, sequence_length, self.n_heads, self.head_dim).transpose(1, 2)
 
+        # Keys and values of earlier tokens never change, so reuse them instead of
+        # recomputing. Only the new tokens' K/V were projected above.
+        if past_kv is not None:
+            past_key, past_value = past_kv
+            key = torch.cat([past_key, key], dim=2)
+            value = torch.cat([past_value, value], dim=2)
+        present_kv = (key, value) if use_cache else None
+
+        total_length = key.size(2)
         attention_scores = query @ key.transpose(-2, -1)
         attention_scores = attention_scores / math.sqrt(self.head_dim)
 
-        mask = self.causal_mask[:, :, :sequence_length, :sequence_length]
+        # New queries sit at absolute positions [total_length - T, total_length), so take
+        # those mask rows (not rows 0..T) and let them see every key up to their position.
+        mask = self.causal_mask[:, :, total_length - sequence_length : total_length, :total_length]
         attention_scores = attention_scores.masked_fill(~mask, float("-inf"))
 
         attention_weights = torch.softmax(attention_scores, dim=-1)
@@ -60,4 +80,4 @@ class CausalSelfAttention(nn.Module):
         attended = attention_weights @ value
         attended = attended.transpose(1, 2).contiguous().view(batch_size, sequence_length, channels)
         output = self.out_proj(attended)
-        return self.resid_dropout(output)
+        return self.resid_dropout(output), present_kv
